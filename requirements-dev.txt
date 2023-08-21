@@ -19,7 +19,6 @@ requests
 scikit-learn
 scipy
 timezonefinder
-urllib3
 
 sphinx
 sphinx-rtd-theme

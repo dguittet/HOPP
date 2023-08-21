@@ -5,6 +5,7 @@ from shapely.validation import make_valid
 from shapely.ops import transform
 from fastkml import kml
 import pyproj
+import utm
 
 from hybrid.resource import (
     SolarResource,
@@ -124,6 +125,7 @@ class SiteInfo:
             raise ValueError("SiteInfo requires lat and lon")
         self.lat = data['lat']
         self.lon = data['lon']
+        self.n_timesteps = None
         if 'year' not in data:
             data['year'] = 2012
         
@@ -131,7 +133,8 @@ class SiteInfo:
             data['no_solar'] = False
 
         if not data['no_solar']:
-            self.solar_resource = SolarResource(self.lat, self.lon, data['year'], filepath=solar_resource_file)
+            self.solar_resource = SolarResource(data['lat'], data['lon'], data['year'], filepath=solar_resource_file)
+            self.n_timesteps = len(self.solar_resource.data['gh']) // 8760 * 8760
 
         if 'no_wind' not in data:
             data['no_wind'] = False
@@ -140,9 +143,13 @@ class SiteInfo:
             # TODO: allow hub height to be used as an optimization variable
             self.wind_resource = WindResource(self.lat, self.lon, data['year'], wind_turbine_hub_ht=hub_height,
                                             filepath=wind_resource_file)
+            n_timesteps = len(self.wind_resource.data['data']) // 8760 * 8760
+            if self.n_timesteps is None:
+                self.n_timesteps = n_timesteps
+            elif self.n_timesteps != n_timesteps:
+                raise ValueError(f"Wind resource timesteps of {n_timesteps} different than other resource timesteps of {self.n_timesteps}")
 
-        self.elec_prices = ElectricityPrices(self.lat, self.lon, data['year'], filepath=grid_resource_file)
-        self.n_timesteps = len(self.solar_resource.data['gh']) // 8760 * 8760
+        self.elec_prices = ElectricityPrices(data['lat'], data['lon'], data['year'], filepath=grid_resource_file)
         self.n_periods_per_day = self.n_timesteps // 365  # TODO: Does not handle leap years well
         self.interval = int((60*24)/self.n_periods_per_day)
         self.urdb_label = data['urdb_label'] if 'urdb_label' in data.keys() else None
@@ -244,15 +251,18 @@ class SiteInfo:
         features = list(k.features())[0]
         placemarks = list(list(features.features())[0].features())
         
-        gmaps_epsg = pyproj.CRS("EPSG:3857")
-        utm = pyproj.CRS('EPSG:32618')
-        project = pyproj.Transformer.from_crs(gmaps_epsg, utm, always_xy=True).transform
+        gmaps_epsg = pyproj.CRS("EPSG:4326")
+        project = None
 
         valid_region = None
         for pm in placemarks:
             if "boundary" in pm.name.lower():
                 valid_region = make_valid(pm.geometry)
-                lat, lon = valid_region.centroid.x, valid_region.centroid.y
+                lon, lat = valid_region.centroid.x, valid_region.centroid.y
+                if project is None:
+                    zone_num = utm.from_latlon(lat, lon)[2]
+                    utm_proj= pyproj.CRS(f'EPSG:326{zone_num}')
+                    project = pyproj.Transformer.from_crs(gmaps_epsg, utm_proj, always_xy=True).transform
                 valid_region = transform(project, valid_region)
                 break
         if valid_region is None:

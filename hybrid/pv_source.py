@@ -19,14 +19,21 @@ class PVPlant(PowerSource):
                  pv_config: dict):
         """
 
-        :param pv_config: dict, with keys ('system_capacity_kw', 'layout_params')
-            where 'layout_params' is of the SolarGridParameters type
+        :param pv_config: dict, with following keys:
+            'system_capacity_kw': float, design system capacity
+            'layout_params': dict, optional layout parameters of the SolarGridParameters type for PVLayout
+            'layout_model': optional layout model object to use instead of the PVLayout model
         """
         if 'system_capacity_kw' not in pv_config.keys():
             raise ValueError
 
-        system_model = Pvwatts.default("PVWattsSingleOwner")
-        financial_model = Singleowner.from_existing(system_model, "PVWattsSingleOwner")
+        self.config_name = "PVWattsSingleOwner"
+        system_model = Pvwatts.default(self.config_name)
+
+        if 'fin_model' in pv_config.keys():
+            financial_model = self.import_financial_model(pv_config['fin_model'], system_model, self.config_name)
+        else:
+            financial_model = Singleowner.from_existing(system_model, self.config_name)
 
         super().__init__("SolarPlant", site, system_model, financial_model)
 
@@ -34,10 +41,15 @@ class PVPlant(PowerSource):
 
         self.dc_degradation = [0]
 
-        params: Optional[PVGridParameters] = None
-        if 'layout_params' in pv_config.keys():
-            params: PVGridParameters = pv_config['layout_params']
-        self._layout = PVLayout(site, system_model, params)
+        if 'layout_model' in pv_config.keys():
+            self._layout = pv_config['layout_model']
+            self._layout._system_model = self._system_model
+        else:
+            if 'layout_params' in pv_config.keys():
+                params: PVGridParameters = pv_config['layout_params']
+            else:
+                params = None
+            self._layout = PVLayout(site, system_model, params)
 
         self._dispatch: PvDispatch = None
 
@@ -57,6 +69,7 @@ class PVPlant(PowerSource):
         :return:
         """
         self._system_model.SystemDesign.system_capacity = size_kw
+        self._financial_model.value('system_capacity', size_kw) # needed for custom financial models
         self._layout.set_system_capacity(size_kw)
 
     @property
